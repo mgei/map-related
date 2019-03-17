@@ -1,8 +1,10 @@
 # Map related things
 
+## 1. trackanimation
+
 The goal is to create a map animation with **trackanimation** (https://pypi.org/project/trackanimation/). First we have to reformat the location data (French coordinates). For this we use **R** with `rgdal`. Then we use this in Python to generate the animation.
 
-# R to generate the data
+### R to generate the data
 
 **trackanimation** can work with *GPX* data or with simple locations. We have just locations in a CSV file. To have the right format, trackanimation needs the following fields:
 
@@ -18,8 +20,19 @@ The goal is to create a map animation with **trackanimation** (https://pypi.org/
 
 Write to `data/tomap.csv`
 
-# Python trackanimation
+### Python trackanimation
 
 `make_trackanimation.py`: Very simple, the library does the work for us.
 
 ![](preview.gif)
+
+## 2. Generate individual static map images
+
+The idea here is that these can be used for making a video, e.g. using OpenCV in Python.
+
+We use R and **ggmap** (https://github.com/dkahle/ggmap) for this.
+
+`Rscript gen_static_maps.R`. What it does:
+
+1. Download a static map with `get_map(loc, zoom)` (Google API key required!)
+2. Loop and save
