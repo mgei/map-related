@@ -3,11 +3,12 @@
 library(tidyverse)
 library(rgdal)
 library(ggmap)
+library(anytime)
 
 
-generate_sta <- function(imagedir = "../img/.",
-                         imgprefix = "W_",
-                         imgsuffix = "L.png",
+generate_sta <- function(#imagedir = "../img/.",
+                         #imgprefix = "W_",
+                         #imgsuffix = "L.png",
                          csvpath = "../data/interval3.5m-gps.csv",
                          csvdelim = " ",
                          datecol = "X1",
@@ -15,23 +16,30 @@ generate_sta <- function(imagedir = "../img/.",
                          ycol = "X5",
                          obscol = "X2",
                          projection = "+init=epsg:27572",
-                         mapsoutput = "../staticmap/map_") {
+                         outputdir = "../staticmap2/") {
   
-  pictures <- list.files(imagedir, include.dirs = F, recursive = F,
-                         pattern = ".png$") %>% 
-    enframe(name = "n") %>% 
-    mutate(id = str_remove(value, imgprefix) %>% str_remove(imgsuffix),
-           set = "main") %>% 
-    mutate(id = as.integer(id))
+  # pictures <- list.files(imagedir, include.dirs = F, recursive = F,
+  #                        pattern = ".png$") %>% 
+  #   enframe(name = "n") %>% 
+  #   mutate(id = str_remove(value, imgprefix) %>% str_remove(imgsuffix),
+  #          set = "main") %>% 
+  #   mutate(id = as.integer(id))
   
   data <- read_delim(csvpath, csvdelim, col_names = F) %>%
     rename(Date = datecol, x = xcol, y = ycol, obs = obscol) %>% 
-    mutate(Date = Date %>% str_sub(1,10) %>% as.integer() %>% anytime()) %>% 
-    filter(obs %in% pictures$id) %>% 
-    left_join(pictures, by = c("obs" = "id"))
+    mutate(Date = Date %>% str_sub(1,10) %>% as.integer(),
+           Date_asdate = Date %>% anytime()) %>% 
+    select(Date, Date_asdate, obs, x, y)
   
+  # unique timestamp, take the first
+  data %>% 
+    group_by(Date) %>% 
+    summarise(Date_asdate = first(Date_asdate),
+              obs = first(obs),
+              x = first(x), y = first(y)) %>% 
+    ungroup() -> data
   
-  orig_coords <- data %>% select(lat = x, lon = y, obs, value, set)
+  orig_coords <- data %>% select(lat = x, lon = y, obs, Date, Date_asdate)
   coordinates(orig_coords) <- c('lat', 'lon')
   
   proj4string(orig_coords) <- CRS(projection)
@@ -40,8 +48,9 @@ generate_sta <- function(imagedir = "../img/.",
   
   tomap <- Metric_coords %>% 
     as_tibble() %>% 
-    select(obs, Longitude = lat, Latitude = lon, value, set) %>% 
-    mutate(col = if_else(set == "main", "blue", "red"))
+    select(obs, Longitude = lat, Latitude = lon, Date, Date_asdate) %>% 
+    mutate(set = "main",
+           col = if_else(set == "main", "blue", "red"))
   
   # get static map from Google
   if(!file.exists("api.key")) { 
@@ -64,7 +73,7 @@ generate_sta <- function(imagedir = "../img/.",
       geom_point(data = tomap[i,], aes(x = Longitude, y = Latitude),
                  size = 6, color = "red")
     
-    ggsave(paste0(mapsoutput, tomap[i, "value"]), plot)
+    ggsave(paste0(outputdir, tomap[i, "Date"], ".png"), plot)
   }
   
   print("static map images should be in the folder")
