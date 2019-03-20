@@ -12,7 +12,7 @@ The goal is to create a map animation with **trackanimation** (https://pypi.org/
 * Latitude
 * Longitude
 * Altitude: We don't have, we set to 0
-* Data: Originally we have a Unix timestamp. In R we convert it with `anytime::anytime()`. Note that strangly only the first 10 characters are actually timestamp, we subset the string.
+* Date: Originally we have a Unix timestamp. In R we convert it with `anytime::anytime()`. Note that strangly only the first 10 characters are actually timestamp, we subset the string.
 * Speed: We don't have, set 0. Could theoretically be computed.
 * TimeDifference: Not needed but simple computation as `as.double(Data - lag(Date))`
 * Distance: Again could be computed, we set 0 because we're lazy
