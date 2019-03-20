@@ -36,3 +36,15 @@ We use R and **ggmap** (https://github.com/dkahle/ggmap) for this.
 
 1. Download a static map with `get_map(loc, zoom)` (Google API key required!)
 2. Loop and save
+
+## 3. Generate individual static map images with timestamp
+
+### 3.1. Generate map images
+
+`R/gen_static_maps_timestamp.R` takes the CSV we have. The first 10 digits from one column in our data is the UNIX timestamp. First we remove the double enteries (`dplyr::distinct()`) and just take the first coordinate positions recorded (`dplyr::first()`).
+
+See the function variable inputs before running.
+
+### 3.2. Generate video with OpenCV
+
+`Python/make_video_opencv.py` is simple code to generate a video from the images previously saved.
