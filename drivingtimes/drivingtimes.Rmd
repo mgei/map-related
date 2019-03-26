@@ -22,11 +22,10 @@ In the following we want to create a map that shows the *driving time* to the cl
 
 > The Open Source Routing Machine or OSRM is a C++ implementation of a high-performance routing engine for shortest paths in road networks. Licensed under the permissive 2-clause BSD license, OSRM is a free network service. OSRM supports Linux, FreeBSD, Windows, and Mac OS X platform.[^wiki]
 
-There is a [OSRM package for R](https://github.com/rCarto/osrm) that makes it easy to send requests to a OSRM server. It can be installed with the following.
+There is a [OSRM package for R](https://github.com/rCarto/osrm) that makes it easy to send requests to a OSRM server. It can be installed from CRAN.
 
 ```{r installosrm, eval=F}
 
-# To install the version from CRAN
 install.packages("osrm")
 
 ```
@@ -34,7 +33,6 @@ install.packages("osrm")
 ```{r loadosrm}
 
 library(osrm)
-??osrm
 
 ```
 
@@ -53,9 +51,9 @@ The easiest solution is to run it with Docker. This requires 2 preparatory steps
 1. Install Docker CE https://docs.docker.com/install/
 2. Get the *osrm-backend* running https://hub.docker.com/r/osrm/osrm-backend/
 
-The first step of installing Docker might take 30 minutes or so. The second step is also pretty straightforward if you follow the *Quick Start* section in the Docker Hub link provided above.
+The first step of installing Docker might take 30 minutes. The second step is also pretty straightforward if you follow the *Quick Start* section in the Docker Hub link provided above.
 
-The OpenStreetMap data required to compute paths can be downloaded from http://download.geofabrik.de. For this project we want the latest data (*.osm.pbf) of Switzerland, which can be downloaded (here)[http://download.geofabrik.de/europe/switzerland-latest.osm.pbf].
+The OpenStreetMap data required to compute paths can be downloaded from http://download.geofabrik.de. For this project we want the latest data (*.osm.pbf) of Switzerland, which can be downloaded [here](http://download.geofabrik.de/europe/switzerland-latest.osm.pbf).
 
 ```{bash wget, eval = F}
 
@@ -98,3 +96,106 @@ getOption("osrm.server")
 ```
 
 [^wiki]: https://en.wikipedia.org/wiki/Open_Source_Routing_Machine
+
+## Swiss hospital data
+
+We will use the [Key figures for Swiss hospitals](https://www.bag.admin.ch/bag/de/home/zahlen-und-statistiken/zahlen-fakten-zu-spitaelern/kennzahlen-der-schweizer-spitaeler.html) from the Federal Office of Public Health. The latest dataset as of writing this is from 2016 (publishment lags by around 2 years). That's an spreadsheet that we download to the project's data directory.
+
+```{bash dldata, eval = F}
+
+wget http://www.bag-anw.admin.ch/2016_taglab/2016_spitalstatistik/data/download/kzp16_daten.xlsx -P data/.
+
+```
+
+We load the data as follows. The relevant sheet we know from exploring the spreadsheet manually. Also we found out that everything that follows after row 283 is totals and therefore irrelevant. Note also that we replace some character called *soft-hyphens* because they generally cause trouble in my R environment (is it a UTF-8 problem?).
+
+```{r loadxl}
+
+library(tidyverse)
+library(readxl)
+
+hospitals <- read_excel(path = "data/kzp16_daten.xlsx",
+                        sheet = "KZ2016_KZP16",
+                        n_max = 293) %>% 
+  # replace soft-hyphens 
+  mutate(Inst = gsub("\u00AD", "-", Inst, perl = F),
+         Adr = gsub("\u00AD", "-", Adr, perl = F),
+         Ort = gsub("\u00AD", "-", Ort, perl = F))
+
+```
+
+Next we filter the hospitals. We want the ones that have an emergency room (*NF* for Notfall in the data), as well as a CT (computer tomography). Also we filter for acute care institutions (*A* for *Akut*). Lastly we select the columns that we need.
+
+```{r filterselect}
+
+emergency_hospitals <- hospitals %>%
+  filter(str_detect(Akt, "A"),
+         str_detect(SL, "NF"),
+         str_detect(SA, "CT")) %>% 
+  dplyr::select(Inst, Adr, Ort, KT, Akt, SA, LA)
+
+# three random hospitals
+sample_n(emergency_hospitals, 3)
+
+# number of hospitals
+nrow(emergency_hospitals)
+
+```
+
+Next we geocode the hospitals. For this we first create a new field *address* that we pass to the Google geocode API. Note that this service is no longer available for free, but there's the possibility to get a free API key if you have never used Google Developer services before. Ordinary price is $0.005, so for 82 addresses that is $`r 0.005*82`.
+
+```{r geocode, eval = F}
+
+library(ggmap)
+
+emergency_hospitals <- emergency_hospitals %>% 
+  mutate(address = str_c(str_replace_na(Inst, ""),
+                         str_replace_na(Adr, ""),
+                         str_replace_na(Ort, ""),
+                         sep = ", "))
+
+if(!file.exists("api.key")) { 
+  print("you need a Google Map API key and put it in a file called api.key") 
+} else{
+  key <- readChar("api.key", file.info("api.key")$size - 1)
+  register_google(key)
+
+  emergency_hospitals_geocoded <- emergency_hospitals %>% 
+    mutate_geocode(address)
+}
+
+```
+
+It is advisable to save the geocoded locations.
+
+```{r savelocs, eval=F}
+
+emergency_hospitals_geocoded %>% write_rds("data/emergency_hospitals_geocoded.RDS")
+
+```
+
+```{r readlocs, echo=F, message=F}
+
+emergency_hospitals_geocoded <- readRDS("data/emergency_hospitals_geocoded.RDS")
+
+```
+
+Now just for verification, let's create an interactive map of the emergency hospitals.
+
+```{r hosplocations, eval = F}
+
+library(leaflet)
+
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addMarkers(data = emergency_hospitals_geocoded,
+             lng = ~lon, lat = ~lat, popup = ~Inst)
+
+```
+
+Next we will calculate driving times.
+
+# Computation
+
+...
+
