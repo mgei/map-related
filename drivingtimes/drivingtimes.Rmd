@@ -1,30 +1,100 @@
 ---
-title: "Driving times"
+title: "How far to the closest hospital?"
 author: "Martin Geissmann"
-date: "3/26/2019"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: md_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+# Intro
+
+Imagine you just fell out of a plane over Switzerland and landed at a random location. As you are wounded your number one concern it to get to a hospital asap. Not any hospital but one that has an emergency room and is equiped at least with a CT (computer tomography).
+
+In the following we want to create a map that shows the *driving time* to the closest emergency hospital. We use the following:
+
+* a public list of Swiss hospitals
+* our own OSRM server (Docker) to estimate driving times
+* 2D interpolation and mapping functions in R (ggmap, raster, sp etc.)
+* leaflet to create an interactive map
+
+# Preparation
+
+## OSRM server
+
+> The Open Source Routing Machine or OSRM is a C++ implementation of a high-performance routing engine for shortest paths in road networks. Licensed under the permissive 2-clause BSD license, OSRM is a free network service. OSRM supports Linux, FreeBSD, Windows, and Mac OS X platform.[^wiki]
+
+There is a [OSRM package for R](https://github.com/rCarto/osrm) that makes it easy to send requests to a OSRM server. It can be installed with the following.
+
+```{r installosrm, eval=F}
+
+# To install the version from CRAN
+install.packages("osrm")
+
 ```
 
-## R Markdown
+```{r loadosrm}
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+library(osrm)
+??osrm
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
 ```
 
-## Including Plots
+By default the OSRM package uses a public demo server.
 
-You can also embed plots, for example:
+```{r verifyserver}
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+getOption("osrm.server")
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+The public server is fine for testing but not for sending too many requests in a short time. It will give errors and not work. Therefore it is suggested to get your own instance of OSRM.
+
+The easiest solution is to run it with Docker. This requires 2 preparatory steps:
+
+1. Install Docker CE https://docs.docker.com/install/
+2. Get the *osrm-backend* running https://hub.docker.com/r/osrm/osrm-backend/
+
+The first step of installing Docker might take 30 minutes or so. The second step is also pretty straightforward if you follow the *Quick Start* section in the Docker Hub link provided above.
+
+The OpenStreetMap data required to compute paths can be downloaded from http://download.geofabrik.de. For this project we want the latest data (*.osm.pbf) of Switzerland, which can be downloaded (here)[http://download.geofabrik.de/europe/switzerland-latest.osm.pbf].
+
+```{bash wget, eval = F}
+
+wget http://download.geofabrik.de/europe/switzerland-latest.osm.pbf
+
+```
+
+Then run the following:
+
+```{bash rundocker, eval = F}
+
+docker run -t -v "${PWD}:/data" osrm/osrm-backend osrm-extract -p /opt/car.lua /data/switzerland-latest.osm.pbf
+
+docker run -t -v "${PWD}:/data" osrm/osrm-backend osrm-partition /data/switzerland-latest.osrm
+docker run -t -v "${PWD}:/data" osrm/osrm-backend osrm-customize /data/switzerland-latest.osrm
+
+docker run -t -i -p 5000:5000 -v "${PWD}:/data" osrm/osrm-backend osrm-routed --algorithm mld /data/switzerland-latest.osrm
+
+```
+
+The last command will run the docker container. You can check it is running with `bash docker container ls`. Also let's request a route from Zurich (47.3769 N, 8.5417 E) to Geneva (46.2044 N, 6.1432 E).
+
+```{bash testit}
+
+curl "http://127.0.0.1:5000/route/v1/driving/8.5417,47.3769;6.1432,46.2044?steps=false"
+
+```
+
+If the output is something with "Bahnhofsplatz" and "Place de Bel-Air" then it is working fine.
+
+Now back in R you want to set the server to your own, so all requests are handled by your own instance. This has to be done each time after you load the `osrm` package.
+
+```{r setserver}
+
+options(osrm.server = "http://localhost:5000/")
+
+# check if it's set correctly
+getOption("osrm.server")
+
+```
+
+[^wiki]: https://en.wikipedia.org/wiki/Open_Source_Routing_Machine
