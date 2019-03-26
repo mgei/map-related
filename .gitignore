@@ -4,3 +4,4 @@
 *.key
 *.avi
 *.JPG
+!pressure-1.png
