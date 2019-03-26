@@ -22,7 +22,7 @@ Write to `data/tomap.csv`
 
 `make_trackanimation.py`: Very simple, the library does the work for us.
 
-![](preview.gif)
+![](../preview.gif)
 
 # 2. Create a video from individual static map images
 
