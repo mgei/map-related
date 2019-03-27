@@ -13,7 +13,11 @@ See the README in the relevant folder for more info.
 
 ## Driving times map
 
-We want to create a map of driving times to several points.
+Creating a map of interpolated driving times using OSRM.
+
+![](preview-dt.png)
+
+Can be found here: http://rpubs.com/mgei/drivingtimes
 
 ## Perspective raster map overlay
 

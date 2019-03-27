@@ -5,3 +5,10 @@
 *.avi
 *.JPG
 !pressure-1.png
+.Rhistory
+*.RDS
+*.rds
+rsconnect/
+!hospital.png
+*.xlsx
+!preview-dt.png

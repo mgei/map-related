@@ -2,19 +2,29 @@
 title: "How far to the closest hospital?"
 author: "Martin Geissmann"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
-output: md_document
+output: html_document
 ---
 
 # Intro
 
-Imagine you just fell out of a plane over Switzerland and landed at a random location. As you are wounded your number one concern it to get to a hospital asap. Not any hospital but one that has an emergency room and is equiped at least with a CT (computer tomography).
+Imagine you just fell out of a plane over Switzerland and landed at a random location. As you are wounded your number one concern it to get to a hospital asap. Not any hospital but one that has an emergency room and is equipped at least with a CT to check for fractures.
 
 In the following we want to create a map that shows the *driving time* to the closest emergency hospital. We use the following:
 
 * a public list of Swiss hospitals
 * our own OSRM server (Docker) to estimate driving times
-* 2D interpolation and mapping functions in R (ggmap, raster, sp etc.)
-* leaflet to create an interactive map
+* 2D interpolation and mapping functions in R (`gstat`, `ggmap`, `raster`, `sp` etc.)
+* `leaflet` to create an interactive map
+
+Here's what we want to create:
+
+```{r previewloadplotfinal, echo=F}
+
+finalmap <- readRDS("data/finalmap.RDS")
+
+finalmap
+
+```
 
 # Preparation
 
@@ -22,7 +32,7 @@ In the following we want to create a map that shows the *driving time* to the cl
 
 > The Open Source Routing Machine or OSRM is a C++ implementation of a high-performance routing engine for shortest paths in road networks. Licensed under the permissive 2-clause BSD license, OSRM is a free network service. OSRM supports Linux, FreeBSD, Windows, and Mac OS X platform.[^wiki]
 
-There is a [OSRM package for R](https://github.com/rCarto/osrm) that makes it easy to send requests to a OSRM server. It can be installed from CRAN.
+There is a [OSRM package for R](https://github.com/rCarto/osrm) that makes it convenient to send route requests to an OSRM server. It can be installed from CRAN.
 
 ```{r installosrm, eval=F}
 
@@ -44,14 +54,14 @@ getOption("osrm.server")
 
 ```
 
-The public server is fine for testing but not for sending too many requests in a short time. It will give errors and not work. Therefore it is suggested to get your own instance of OSRM.
+The public server is fine for testing but not for sending too many requests in a short time. It will give errors and not work. Therefore it is suggested to get your own OSRM instance.
 
 The easiest solution is to run it with Docker. This requires 2 preparatory steps:
 
 1. Install Docker CE https://docs.docker.com/install/
 2. Get the *osrm-backend* running https://hub.docker.com/r/osrm/osrm-backend/
 
-The first step of installing Docker might take 30 minutes. The second step is also pretty straightforward if you follow the *Quick Start* section in the Docker Hub link provided above.
+The first step of installing Docker might take 30 minutes if you follow the steps in the [installation tutorial](https://docs.docker.com/install/). The second step, to run the Docker container on your machine, is also pretty straightforward if you follow the *Quick Start* section in the Docker Hub link provided above.
 
 The OpenStreetMap data required to compute paths can be downloaded from http://download.geofabrik.de. For this project we want the latest data (*.osm.pbf) of Switzerland, which can be downloaded [here](http://download.geofabrik.de/europe/switzerland-latest.osm.pbf).
 
@@ -74,17 +84,19 @@ docker run -t -i -p 5000:5000 -v "${PWD}:/data" osrm/osrm-backend osrm-routed --
 
 ```
 
-The last command will run the docker container. You can check it is running with `bash docker container ls`. Also let's request a route from Zurich (47.3769 N, 8.5417 E) to Geneva (46.2044 N, 6.1432 E).
+The last command will run the docker container. You can check it is running with `docker container ls`. To stop it type `docker container stop  <the-id-you-get-with-container-ls>`. To start it again, just run the last command from the commands block above. 
+
+Also for testing purposes let's request a route from Zurich (47.3769 N, 8.5417 E) to Geneva (46.2044 N, 6.1432 E).
 
 ```{bash testit}
 
-curl "http://127.0.0.1:5000/route/v1/driving/8.5417,47.3769;6.1432,46.2044?steps=false"
+curl "http://localhost:5000/route/v1/driving/8.5417,47.3769;6.1432,46.2044?steps=false"
 
 ```
 
-If the output is something with "Bahnhofsplatz" and "Place de Bel-Air" then it is working fine.
+The output is something with "Bahnhofsplatz" and "Place de Bel-Air" so it seems to be working fine.
 
-Now back in R you want to set the server to your own, so all requests are handled by your own instance. This has to be done each time after you load the `osrm` package.
+Now back in R you want to opt for `osrm` to use the private server. All requests will be handled by your own instance. This has to be done each time after you load the `osrm` package.
 
 ```{r setserver}
 
@@ -99,7 +111,7 @@ getOption("osrm.server")
 
 ## Swiss hospital data
 
-We will use the [Key figures for Swiss hospitals](https://www.bag.admin.ch/bag/de/home/zahlen-und-statistiken/zahlen-fakten-zu-spitaelern/kennzahlen-der-schweizer-spitaeler.html) from the Federal Office of Public Health. The latest dataset as of writing this is from 2016 (publishment lags by around 2 years). That's an spreadsheet that we download to the project's data directory.
+We will use the [key figures for Swiss hospitals](https://www.bag.admin.ch/bag/de/home/zahlen-und-statistiken/zahlen-fakten-zu-spitaelern/kennzahlen-der-schweizer-spitaeler.html) from the Swiss Federal Office of Public Health. The latest data as of writing this dates back to 2016 (publishment lags by around 2 years). That's a spreadsheet that we download to the project's data directory.
 
 ```{bash dldata, eval = F}
 
@@ -107,7 +119,7 @@ wget http://www.bag-anw.admin.ch/2016_taglab/2016_spitalstatistik/data/download/
 
 ```
 
-We load the data as follows. The relevant sheet we know from exploring the spreadsheet manually. Also we found out that everything that follows after row 283 is totals and therefore irrelevant. Note also that we replace some character called *soft-hyphens* because they generally cause trouble in my R environment (is it a UTF-8 problem?).
+We load the data as follows. The relevant sheet we know from exploring the spreadsheet manually. Also we found out that everything that follows after row 283 are *totals* and therefore irrelevant. Note also that we replace some character called *soft-hyphens* because they generally cause trouble in the R environment (is it a UTF-8 problem?).
 
 ```{r loadxl}
 
@@ -124,7 +136,7 @@ hospitals <- read_excel(path = "data/kzp16_daten.xlsx",
 
 ```
 
-Next we filter the hospitals. We want the ones that have an emergency room (*NF* for Notfall in the data), as well as a CT (computer tomography). Also we filter for acute care institutions (*A* for *Akut*). Lastly we select the columns that we need.
+Next we filter the hospitals. We want the ones that have an emergency room (*NF* for Notfall in the data), as well as a CT (computer tomography). Also we filter for acute care institutions (*A* for *Akut*). Lastly, we select the columns that we need.
 
 ```{r filterselect}
 
@@ -135,6 +147,7 @@ emergency_hospitals <- hospitals %>%
   dplyr::select(Inst, Adr, Ort, KT, Akt, SA, LA)
 
 # three random hospitals
+set.seed(33)
 sample_n(emergency_hospitals, 3)
 
 # number of hospitals
@@ -180,22 +193,423 @@ emergency_hospitals_geocoded <- readRDS("data/emergency_hospitals_geocoded.RDS")
 
 ```
 
-Now just for verification, let's create an interactive map of the emergency hospitals.
+Now just for verification, let's create an interactive leaflet map that we will use from here on and show the emergency hospitals on it.
 
-```{r hosplocations, eval = F}
+```{r hosplocations}
 
 library(leaflet)
 
-leaflet() %>% 
+icons <- iconList(
+  hospital = makeIcon("data/hospital.png", iconWidth = 18, iconHeight = 18)
+)
+
+basicmap <- leaflet() %>% 
   addProviderTiles(providers$CartoDB.Positron) %>% 
   addMarkers(data = emergency_hospitals_geocoded,
-             lng = ~lon, lat = ~lat, popup = ~Inst)
+             lng = ~lon, lat = ~lat, popup = ~Inst,
+             group = "Hospitals", icon = icons["hospital"])
+
+basicmap %>% 
+  addLayersControl(overlayGroups = c("Hospitals"))
 
 ```
 
 Next we will calculate driving times.
 
-# Computation
+# Towards a driving time surface
 
-...
+## Requesting the driving times
 
+What we want is a cloud of points from which we want to know the shortest driving time to reach the closest hospital. We could go for an evenly distributed matrix of points, or as done hereafter, randomly selected points. Those will be the basis for making an interpolation later.
+
+First, let's define the extremes that we want the points to be in, here the extremes of Switzerland. Those come from [Wikipedia](https://en.wikipedia.org/wiki/List_of_extreme_points_of_Switzerland).
+
+```{r extremedef}
+
+lonmin <- 5.956303
+lonmax <- 10.491944
+latmin <- 45.818031
+latmax <- 47.808264
+
+```
+
+Then we create a randomly distributed cloud of 100 points and add them to the previously created leaflet map.
+
+```{r randifpoints}
+
+n <- 100
+
+set.seed(123)
+randompts <- tibble(id=1:n,
+                    lon = runif(n, min = lonmin, max = lonmax),
+                    lat = runif(n, min = latmin, max = latmax))
+
+basicmap %>% 
+  addCircleMarkers(data = randompts, lng = ~lon, lat = ~lat, color = "red", radius = 6,
+                   group = "Random Points") %>% 
+  addLayersControl(overlayGroups = c("Hospitals", "Random Points"))
+
+```
+
+To request driving times from our OSRM server we use `osrm::osrmTable(src, dst)` with `src` being the sources (our random points) and `dst` the destinations (the hospitals). It will calculate the driving time from each source to each destination. In the case illustrated here that would sum up to 8200 observations (100 random sources, 82 hospitals).
+
+Of course it does not make much sense to compute a driving time say from Zurich to an emergency hospital in Lugano which is 200km away. This could be overcome by splitting the map in several (overlapping) regions and merging it again at the end. However, because the responses from our own (low-spec!) OSRM server come so quickly anyway (<1sec), we do not bother.
+
+Note also that we need to input data frames with the columns `id`/`lon`/`lat`. Tibbles would not work.
+
+```{r testrequest}
+
+randompoints_df <- randompts %>% 
+  as.data.frame()
+
+hospitals_df <- emergency_hospitals_geocoded %>% 
+  dplyr::select(id = Inst, lon, lat) %>% 
+  as.data.frame()
+  
+t0 <- Sys.time()
+
+distancetable <- osrmTable(src = randompoints_df, dst = hospitals_df)
+
+Sys.time() - t0
+
+distancetable %>% summary()
+```
+
+
+Next, we extract the *minimal* driving times (to the next hospital) and add it to a map. Note that some points moved, that's because the actual source point is the closest road from within the region we loaded the map for (Switzerland).
+
+```{r mintimescalc}
+
+mindistances <- bind_cols(distancetable$sources, mintime = apply(distancetable$durations, 1, min)) %>% 
+  as_tibble() %>% 
+  mutate(mintime_str = as.character(mintime)) %>% 
+  distinct()
+
+binpal <- colorBin("Reds", domain = 0:max(mindistances["mintime"]))
+
+basicmap %>% 
+  addCircleMarkers(data = mindistances, lng = ~lon, lat = ~lat, radius = 10,
+                   color = ~binpal(mintime), popup = ~mintime_str,
+                   group = "Driving times") %>% 
+  addLayersControl(overlayGroups = c("Hospitals", "Driving times"))
+
+```
+
+For an interpolation we will need more than 100 points. As we are running our own server, this is not an issue. Still, in its default settings, it will throw an error when too many requests are made. There is an option to allow for more requests, but it did not work for me. Therefore we just loop over smaller sized requests.
+
+A total of 10'000 points would be great (100 requests at 100 each).
+
+```{r looprequest, eval = F}
+
+nruns <- 100
+n <- 100
+
+set.seed(13)
+
+for (r in 1:nruns) {
+  
+  randompts <- tibble(id=1:n,
+                      lon = runif(n, min = lonmin, max = lonmax),
+                      lat = runif(n, min = latmin, max = latmax))
+  
+  randompoints_df <- randompts %>% 
+    as.data.frame()
+  hospitals_df <- emergency_hospitals_geocoded %>% 
+    dplyr::select(id = Inst, lon, lat) %>% 
+    as.data.frame()
+  
+  # request OSRM server
+  t0 <- Sys.time()
+  
+  distancetable <- osrmTable(src = randompoints_df, dst = hospitals_df)
+  
+  rrt <- as.numeric(Sys.time() - t0, units = "secs") %>% round(3)
+  
+  mindistances_i <- bind_cols(distancetable$sources, mintime = apply(distancetable$durations, 1, min)) %>% 
+    as_tibble() %>% 
+    mutate(mintime_str = as.character(mintime))
+  
+  mindistances <- bind_rows(mindistances, mindistances_i)
+  
+  print(str_c("run: ", r, ", request response time: ", rrt, "secs"))
+}
+
+```
+
+This does not take too long. Let's remove duplicates and save. Before that, we also add the coordinates of the hospitals themselves with a `mintime` of 0.
+
+```{r savepts, eval=F}
+
+mindistances <- bind_rows(mindistances, 
+                          hospitals_df %>% 
+                            dplyr::select(lon, lat) %>% 
+                            mutate(mintime = 0, mintime_str = "0"))
+
+mindistances <- mindistances %>% 
+  distinct()
+
+mindistances %>% write_rds("data/mindistances.RDS")
+
+```
+
+```{r readdis, echo=F, message=F}
+
+mindistances <- readRDS("data/mindistances.RDS")
+
+```
+
+Note that many entries were removed. This is because OSRM handles input points outside of the border of the loaded dataset as points at the closest coordinates inside the country's border. That's where overlapping occurs mostly.
+
+```{r numrows}
+
+nrow(mindistances)
+
+```
+
+Let's see it our map.
+
+```{r loopedmintimescalc}
+
+binpal <- colorBin("Reds", domain = 0:max(mindistances["mintime"]))
+
+basicmap %>% 
+  addCircleMarkers(data = mindistances, lng = ~lon, lat = ~lat, radius = 5,
+                   color = ~binpal(mintime), popup = ~mintime_str,
+                   group = "Driving times",
+                   opacity = 0.1) %>%
+  addLegend(data = mindistances, pal = binpal, values = ~mintime, group = "Driving times",
+            title = "Time in min to the closest hospital") %>% 
+  addLayersControl(overlayGroups = c("Hospitals", "Driving times")) %>% 
+  hideGroup("Hospitals")
+
+```
+
+Next we will interpolate the points and create a raster layer to show above of the map.
+
+## Interpolation
+
+For this we prepare the following function. We use a *nearest neighbor* (k = 100) algorithm is used.
+
+```{r interpolfct}
+
+library(sp)
+library(raster)
+library(sf)
+library(gstat)
+
+interpolateSurface <- function(data, gridRes = 500){
+  
+  # Make new dataset, that will be spatial - sp:: class
+  data_sp <- data %>% as.data.frame()
+  # Make data as spatial object - spatialPointsDataFrame
+  coordinates(data_sp) <- ~lon+lat
+  # Define CRS - coordinate reference system
+  proj4string(data_sp) <- crs("+init=epsg:4326")
+  # Make it as of object of sf:: class
+  crs <- "+init=epsg:4326"
+  coords <- c("lon", "lat")
+  # (sf: Simple feature collection)
+  data_sf <- st_as_sf(data_sp, coords = coords, crs = crs)
+  # WEB Mercator projection
+  data_sp_mp <- spTransform(data_sp, CRSobj = "+init=epsg:3857")
+
+  # Bounding box, resolution and grid for interpolation
+  boxx = data_sp_mp@bbox
+  deltaX = as.integer((boxx[1,2] - boxx[1,1]) + 1.5)
+  deltaY = as.integer((boxx[2,2] - boxx[2,1]) + 1.5)
+  gridSizeX = deltaX / gridRes
+  gridSizeY = deltaY / gridRes
+  grd = GridTopology(boxx[,1], c(gridRes,gridRes), c(gridSizeX,gridSizeY))
+  pts = SpatialPoints(coordinates(grd))
+  proj4string(pts) <- crs("+init=epsg:3857")
+  
+  # Interpolate the grid cells Nearest neighbour
+  r.raster <- raster::raster()
+  extent(r.raster) <- extent(pts) # set extent
+  res(r.raster) <- gridRes # 500 # set cell size
+  crs(r.raster) <- crs("+init=epsg:3857") # set CRS
+  gs <- gstat(formula = mintime~1, 
+              locations = data_sp_mp, 
+              nmax = 100, 
+              set = list(idp = 0))
+  nn <- interpolate(r.raster, gs)
+  
+  # Result rasters - surfaces
+  data_list <- list(data_sf, nn)
+  names(data_list) <- c("data", "nn")
+  return(data_list)
+}
+
+```
+
+The `gridRes` argument defines the raster resolution. A higher value will result in a more pixelated raster, a lower value will lead to very long computation times.
+
+```{r cpttimes, eval = F}
+
+# # Dont run!
+# tries <-  seq(400, 5000, by = 200)
+# 
+# ts = c()
+# for (try in tries) {
+#   t0 <- Sys.time() 
+# 
+#   interpolateSurface(mindistances, gridRes = try)
+#   
+#   tsi <- as.numeric(Sys.time() - t0, units = "secs")
+#   
+#   ts <- append(ts, tsi)
+# }
+# 
+# cpttimes_plotdata <- tibble(gridRes = tries, seconds = ts)
+# 
+# cpttimes_plotdata %>% 
+#   ggplot(aes(x = gridRes, y = seconds)) +
+#   geom_point() +
+#   geom_line(color = "red", alpha = 0.5) +
+#   labs(title = "Computation time for interpolateSurface()",
+#        subtitle = "using our data with ~5500 points")
+
+```
+
+```{r cpttimessaved, echo=F, message=F}
+
+# cpttimes_plotdata %>% write_rds("data/cpttimes_plotdata.RDS")
+cpttimes_plotdata <- readRDS("data/cpttimes_plotdata.RDS")
+
+cpttimes_plotdata %>% 
+  ggplot(aes(x = gridRes, y = seconds)) +
+  geom_point() +
+  geom_line(color = "red", alpha = 0.5) +
+  labs(title = "Computation time for interpolateSurface()",
+       subtitle = "using our data with ~5500 points")
+
+```
+
+Now that we have a function and know about the computation times, let's run it one last and definitive time with `gridRes = 500` and save it for later use.
+
+```{r fctrunit, eval=F}
+
+minraster <- interpolateSurface(mindistances, gridRes = 500)
+
+minraster %>% write_rds("data/minraster.RDS")
+
+```
+
+```{r loadminraster, echo=F, message=F}
+
+minraster <- readRDS("data/minraster.RDS")
+
+```
+
+Lastly, before we add it to the interactive map, we want to cut it according to the country's border. For this we use a shape file from [GADM](https://gadm.org/) that we can automatically download in R with `raster::getData("GADM", country, level)`. We then use `raster::mask()` to cut the raster accordingly.
+
+```{r cutraster}
+
+switzerland <- getData("GADM", country = "CHE", level = 0)
+
+switzerland_t <- spTransform(switzerland, CRSobj = "+init=epsg:3857")
+
+minraster_shaped <- mask(minraster$nn, switzerland_t)
+
+```
+
+```{r mapraster}
+
+binpal <- colorBin("Reds", domain = 0:max(mindistances["mintime"]))
+
+basicmap %>% 
+  addRasterImage(minraster_shaped, group = "Driving times", opacity = 0.8,
+                 colors = "Reds") %>% 
+  addLayersControl(overlayGroups = c("Hospitals", "Driving times"))
+
+```
+
+# Create a static map
+
+Interactive maps are cool but sometimes you want a static map. That's what we do using `ggplot2` and `ggmap`.
+
+First, we load the map from [Stamen](http://maps.stamen.com) (Google Maps is no longer free and OSM is [unavailable](https://github.com/dkahle/ggmap/issues/117)).
+
+```{r bfggmap, eval = F}
+
+swissterrain <- get_stamenmap(bbox = c(lonmin-0.1, latmin-0.1, lonmax+0.1, latmax+0.1), 
+                              zoom = 9, 
+                              maptype="terrain-background", color = "bw")
+
+```
+
+Next, we need to tweak the raster we created a little, because ggplot2 cannot plot those directly. Probably there would be a more elegant way of doing this, but it works.
+
+```{r adjustalittle, eval = F}
+
+minraster_shaped_aggr <- aggregate(minraster_shaped, fact = 4)
+
+minraster_shaped_rtp <- rasterToPolygons(minraster_shaped_aggr)
+
+minraster_shaped_rtp <- spTransform(minraster_shaped_rtp, 
+                                    CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
+
+minraster_shaped_rtp@data$id <- 1:nrow(minraster_shaped_rtp@data)
+
+minraster_shaped_fort <- fortify(minraster_shaped_rtp, 
+                                 data = minraster_shaped_rtp@data)
+
+minraster_shaped_fort <- merge(minraster_shaped_fort, 
+                               minraster_shaped_rtp@data, 
+                               by.x = 'id', 
+                               by.y = 'id')
+
+```
+
+We also load some cities' coordinates for labels.
+
+```{r cities, eval = F}
+
+library(maps)
+
+swisscities <- world.cities %>% 
+  filter(country.etc == "Switzerland", pop > 120000 | name == "Davos")
+
+```
+
+And finally plot.
+
+```{r ggmapping, eval = F}
+
+bm <- ggmap(swissterrain)
+
+bm + 
+  geom_polygon(data = switzerland, aes(x=long,y=lat,group=group),
+               alpha = 0, color = "black") +
+  geom_polygon(data = minraster_shaped_fort, 
+               aes(x = long, y = lat, group = group, fill = var1.pred, alpha = var1.pred), 
+               # alpha = 0.8, 
+               size = 0) + 
+  geom_point(data = hospitals_df, aes(x = lon, y = lat), color = "blue", alpha = 0.9) +
+  geom_label(data = swisscities, aes(x = long, y = lat, label = name), size = 3) +
+  scale_fill_gradient(low = "white", high = "red") +
+  scale_alpha_continuous(guide = "none", range = c(0.1,1)) +
+  theme_void() +
+  labs(title = "How far to the closest emergency hospital?",
+       subtitle = "An interpolation of driving times using OSRM",
+       x = "", y = "", fill = "minutes\nto the next\nhospital") -> finalmap
+
+finalmap
+
+```
+
+```{r savefinal, echo=F, warning=F, eval = F}
+
+finalmap %>% write_rds("data/finalmap.RDS")
+
+```
+
+```{r loadplotfinal, echo=F}
+
+finalmap <- readRDS("data/finalmap.RDS")
+
+finalmap
+
+```
+
+How can we interpret this? We see that the hospital coverage is pretty good in Switzerland. Only at a few places the nearest hospital is further than an hour away. 
